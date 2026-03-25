@@ -118,7 +118,7 @@ app.post('/api/analyze', async (req, res) => {
 
 
 // ==========================================
-// MODULE 4: Advanced Redirect Tracer
+// MODULE 2: Advanced Redirect Tracer
 // ==========================================
 app.post('/api/trace', async (req, res) => {
     const { targetUrl } = req.body;
@@ -193,6 +193,51 @@ app.post('/api/trace', async (req, res) => {
             error: "Failed to trace URL routing", 
             details: error.message,
             partialChain: hops
+        });
+    }
+});
+
+
+
+// ==========================================
+// MODULE 3: Domain & Server Intelligence
+// ==========================================
+app.post('/api/domain', async (req, res) => {
+    const { targetUrl } = req.body;
+
+    if (!targetUrl) {
+        return res.status(400).json({ error: "Please provide a targetUrl to analyze." });
+    }
+
+    try {
+        // 1. Sanitize the input to extract ONLY the raw domain (e.g., "amazon.com")
+        // Removes http://, https://, www., and any trailing paths
+        let domain = targetUrl.replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
+
+        // 2. Ping the IP-API geolocation service
+        const response = await axios.get(`http://ip-api.com/json/${domain}`);
+
+        if (response.data.status !== 'success') {
+            return res.status(404).json({ error: "Could not resolve DNS or locate server data for this domain." });
+        }
+
+        // 3. Package the routing data for the frontend
+        return res.status(200).json({
+            domain: domain,
+            ip: response.data.query,
+            isp: response.data.isp,
+            organization: response.data.org,
+            country: response.data.country,
+            city: response.data.city,
+            timezone: response.data.timezone,
+            lat: response.data.lat,
+            lon: response.data.lon
+        });
+
+    } catch (error) {
+        return res.status(500).json({ 
+            error: "Failed to fetch domain intelligence", 
+            details: error.message 
         });
     }
 });
