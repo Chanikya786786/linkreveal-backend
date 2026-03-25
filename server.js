@@ -200,9 +200,10 @@ app.post('/api/trace', async (req, res) => {
 
 
 // ==========================================
-// MODULE 5: Domain & Server Intelligence (With Caching)
+// MODULE 5: Domain Intel (Native DNS + GeoJS + Cache)
 // ==========================================
-const domainCache = new Map(); // Initialize our ultra-fast RAM cache
+const dns = require('dns').promises; // Node's built-in native DNS resolver
+const domainCache = new Map();
 
 app.post('/api/domain', async (req, res) => {
     const { targetUrl } = req.body;
@@ -214,39 +215,38 @@ app.post('/api/domain', async (req, res) => {
     try {
         let domain = targetUrl.replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
 
-        // 🔥 THE SPEED UPGRADE: Check the cache first! 🔥
+        // 1. Check RAM Cache First (Lightning Fast)
         if (domainCache.has(domain)) {
-            console.log(`[CACHE HIT] Instant response for ${domain}`);
             return res.status(200).json(domainCache.get(domain));
         }
 
-        // If not in cache, do the heavy network lifting
-        const response = await axios.get(`http://ip-api.com/json/${domain}`);
-
-        if (response.data.status !== 'success') {
-            return res.status(404).json({ error: "Could not resolve DNS or locate server data." });
+        // 2. Native DNS Resolution (Unblockable by firewalls)
+        const records = await dns.resolve4(domain);
+        if (!records || records.length === 0) {
+            throw new Error("No DNS records found for this domain.");
         }
+        const ip = records[0]; // Grab the true server IP
+
+        // 3. Cloud-friendly GeoLookup (5-second timeout so it never hangs)
+        const geoRes = await axios.get(`https://get.geojs.io/v1/ip/geo/${ip}.json`, { timeout: 5000 });
 
         const domainData = {
             domain: domain,
-            ip: response.data.query,
-            isp: response.data.isp,
-            organization: response.data.org,
-            country: response.data.country,
-            city: response.data.city,
-            timezone: response.data.timezone,
-            lat: response.data.lat,
-            lon: response.data.lon
+            ip: ip,
+            isp: geoRes.data.organization_name || "Cloud/Hosting Provider",
+            organization: geoRes.data.organization || "Unknown Organization",
+            country: geoRes.data.country || "Unknown",
+            city: geoRes.data.city || "Unknown"
         };
 
-        // Save the result to RAM so the next request is instant
+        // Save to cache
         domainCache.set(domain, domainData);
 
         return res.status(200).json(domainData);
 
     } catch (error) {
         return res.status(500).json({ 
-            error: "Failed to fetch domain intelligence", 
+            error: "Domain resolution failed. The site might be dead or unreachable.", 
             details: error.message 
         });
     }
