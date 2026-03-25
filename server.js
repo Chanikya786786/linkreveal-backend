@@ -200,8 +200,10 @@ app.post('/api/trace', async (req, res) => {
 
 
 // ==========================================
-// MODULE 3: Domain & Server Intelligence
+// MODULE 5: Domain & Server Intelligence (With Caching)
 // ==========================================
+const domainCache = new Map(); // Initialize our ultra-fast RAM cache
+
 app.post('/api/domain', async (req, res) => {
     const { targetUrl } = req.body;
 
@@ -210,19 +212,22 @@ app.post('/api/domain', async (req, res) => {
     }
 
     try {
-        // 1. Sanitize the input to extract ONLY the raw domain (e.g., "amazon.com")
-        // Removes http://, https://, www., and any trailing paths
         let domain = targetUrl.replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
 
-        // 2. Ping the IP-API geolocation service
+        // 🔥 THE SPEED UPGRADE: Check the cache first! 🔥
+        if (domainCache.has(domain)) {
+            console.log(`[CACHE HIT] Instant response for ${domain}`);
+            return res.status(200).json(domainCache.get(domain));
+        }
+
+        // If not in cache, do the heavy network lifting
         const response = await axios.get(`http://ip-api.com/json/${domain}`);
 
         if (response.data.status !== 'success') {
-            return res.status(404).json({ error: "Could not resolve DNS or locate server data for this domain." });
+            return res.status(404).json({ error: "Could not resolve DNS or locate server data." });
         }
 
-        // 3. Package the routing data for the frontend
-        return res.status(200).json({
+        const domainData = {
             domain: domain,
             ip: response.data.query,
             isp: response.data.isp,
@@ -232,7 +237,12 @@ app.post('/api/domain', async (req, res) => {
             timezone: response.data.timezone,
             lat: response.data.lat,
             lon: response.data.lon
-        });
+        };
+
+        // Save the result to RAM so the next request is instant
+        domainCache.set(domain, domainData);
+
+        return res.status(200).json(domainData);
 
     } catch (error) {
         return res.status(500).json({ 
