@@ -29,30 +29,36 @@ app.post('/api/expand', async (req, res) => {
     try {
         const response = await axios.get(shortUrl, {
             maxRedirects: 0, 
+            timeout: 3000, // 🔥 THE FIX: Give up after 3 seconds if the server ghosts us
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
             validateStatus: function (status) {
                 return status >= 200 && status < 400; 
             }
         });
 
         if (response.status >= 300 && response.status < 400 && response.headers.location) {
+            let nextUrl = response.headers.location;
+            if (!nextUrl.startsWith('http')) {
+                const baseUrl = new URL(shortUrl);
+                nextUrl = `${baseUrl.origin}${nextUrl.startsWith('/') ? '' : '/'}${nextUrl}`;
+            }
             return res.status(200).json({
                 originalUrl: shortUrl,
-                expandedUrl: response.headers.location,
+                expandedUrl: nextUrl,
                 status: "Expanded successfully"
             });
         } else {
             return res.status(200).json({
                 originalUrl: shortUrl,
                 expandedUrl: shortUrl,
-                status: "No redirect found (already expanded)"
+                status: "No redirect found"
             });
         }
 
     } catch (error) {
-        // 🔥 THE ARCHITECTURE UPGRADE 🔥
-        // If the link is fake, dead, or blocked by your ISP's firewall, 
-        // Axios will fail. Instead of throwing an error and stopping the app, 
-        // we gracefully return the original URL so Google can still analyze it!
+        // If it times out or gets blocked by a firewall, instantly bypass to Google
         console.log(`[WARNING] Expansion bypassed for ${shortUrl}`);
         return res.status(200).json({
             originalUrl: shortUrl,
