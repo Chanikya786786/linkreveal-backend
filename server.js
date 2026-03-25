@@ -132,45 +132,52 @@ app.post('/api/trace', async (req, res) => {
         currentUrl = 'https://' + currentUrl;
     }
 
-    const maxHops = 10; // Prevent infinite redirect loops
+    const maxHops = 10;
     let hops = [];
     let isRedirecting = true;
     let hopCount = 0;
 
     try {
         while (isRedirecting && hopCount < maxHops) {
-            const response = await axios.get(currentUrl, {
-                maxRedirects: 0, // CRITICAL: Stop Axios from auto-jumping
-                validateStatus: function (status) {
-                    return status >= 200 && status < 600; // Accept all statuses so we don't throw errors on 3xx
-                },
-                headers: {
-                    // Spoof a browser so security firewalls don't instantly block us
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
+            try {
+                // INNER TRY-CATCH: If this specific hop fails, we catch it without crashing the API
+                const response = await axios.get(currentUrl, {
+                    maxRedirects: 0,
+                    validateStatus: function (status) {
+                        return status >= 200 && status < 600;
+                    },
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    },
+                    timeout: 5000 // 5-second timeout so dead links don't hang the server
+                });
+
+                hops.push({
+                    step: hopCount + 1,
+                    url: currentUrl,
+                    status: response.status
+                });
+
+                if (response.status >= 300 && response.status < 400 && response.headers.location) {
+                    let nextUrl = response.headers.location;
+                    if (!nextUrl.startsWith('http')) {
+                        const baseUrl = new URL(currentUrl);
+                        nextUrl = `${baseUrl.origin}${nextUrl.startsWith('/') ? '' : '/'}${nextUrl}`;
+                    }
+                    currentUrl = nextUrl;
+                    hopCount++;
+                } else {
+                    isRedirecting = false;
                 }
-            });
-
-            hops.push({
-                step: hopCount + 1,
-                url: currentUrl,
-                status: response.status
-            });
-
-            // If we get a 3xx redirect code AND a new location header
-            if (response.status >= 300 && response.status < 400 && response.headers.location) {
-                let nextUrl = response.headers.location;
-                
-                // Handle relative URL redirects (e.g., '/home')
-                if (!nextUrl.startsWith('http')) {
-                    const baseUrl = new URL(currentUrl);
-                    nextUrl = `${baseUrl.origin}${nextUrl.startsWith('/') ? '' : '/'}${nextUrl}`;
-                }
-
-                currentUrl = nextUrl;
-                hopCount++;
-            } else {
-                // We reached a 200 OK, a 404 Not Found, or a firewall. The chain is over.
-                isRedirecting = false;
+            } catch (hopError) {
+                // The destination server is dead, DNS failed, or timed out.
+                // We record it as a DEAD hop and gracefully end the trace.
+                hops.push({
+                    step: hopCount + 1,
+                    url: currentUrl,
+                    status: "DEAD" 
+                });
+                isRedirecting = false; 
             }
         }
 
@@ -185,7 +192,7 @@ app.post('/api/trace', async (req, res) => {
         return res.status(500).json({ 
             error: "Failed to trace URL routing", 
             details: error.message,
-            partialChain: hops // Return whatever hops we successfully found before it crashed
+            partialChain: hops
         });
     }
 });
